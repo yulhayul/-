@@ -5,6 +5,7 @@ from scipy.ndimage import gaussian_filter
 import time
 import pandas as pd
 import random
+from datetime import datetime
 
 # =====================================================================
 # 1. UI 기본 설정 및 Session State 초기화
@@ -14,7 +15,6 @@ st.set_page_config(page_title="FAB 공정 & 수율 분석 시스템", layout="wi
 st.title("반도체 8대 공정 & 수율(Yield) 분석 시스템 🏭")
 st.write("실제 팹(FAB)의 데이터를 모사합니다. 파라미터를 조절하거나 랜덤 시나리오를 발생시켜 불량 원인과 재무적 손실을 분석하세요.")
 
-# SPC(통계적 공정 관리) 트렌드 차트를 위한 기록 저장소
 if 'spc_history' not in st.session_state:
     st.session_state.spc_history = []
 
@@ -33,17 +33,17 @@ def set_random_scenario():
     st.session_state.dicing_spd = random.randint(30, 90)
 
 # =====================================================================
-# 3. 공정별 임계값 및 페널티 룰 (코드 최적화)
+# 3. 공정별 임계값 및 페널티 룰 (리포트용 단위 및 기준 텍스트 추가)
 # =====================================================================
 PROCESS_SPECS = {
-    1: {'key': 'ttv', 'limit': 1.8, 'dir': 'over', 'name': '1. 웨이퍼 제조', 'cause': "평탄도(TTV) {val}µm 과다", 'effect': "표면 굴곡 -> 포토 초점 불량", 'defect': 'Defocus', 'weight': 15.0},
-    2: {'key': 'oxi_temp', 'limit': 1050, 'dir': 'over', 'name': '2. 산화 공정', 'cause': "챔버 온도 {val}℃ 과열", 'effect': "산화막 두께 팽창", 'defect': 'Center', 'weight': 0.15},
-    3: {'key': 'dose', 'limit': 25, 'dir': 'under', 'name': '3. 포토 공정', 'cause': "노광량 {val}mJ/cm² 부족", 'effect': "샷 노이즈 -> 회로 단선", 'defect': 'Random', 'weight': 2.0},
-    4: {'key': 'rf_power', 'limit': 500, 'dir': 'over', 'name': '4. 식각 공정', 'cause': "RF 파워 {val}W 과다", 'effect': "플라즈마 가장자리 쏠림 (Ring)", 'defect': 'Ring', 'weight': 0.08},
-    5: {'key': 'gas_flow', 'limit': 70, 'dir': 'over', 'name': '5. 박막 증착', 'cause': "가스 유량 {val}sccm 과다", 'effect': "가스 미확산 (Donut 뭉침)", 'defect': 'Donut', 'weight': 0.8},
-    6: {'key': 'pressure', 'limit': 4.5, 'dir': 'over', 'name': '6. 연마 (CMP)', 'cause': "패드 압력 {val}psi 과다", 'effect': "마이크로 스크래치 발생", 'defect': 'Scratch', 'weight': 8.0},
-    7: {'key': 'probe_force', 'limit': 3.0, 'dir': 'over', 'name': '7. EDS 검사', 'cause': "프로브 하중 {val}g 초과", 'effect': "패드 물리적 파임", 'defect': 'ProbeMark', 'weight': 12.0},
-    8: {'key': 'dicing_spd', 'limit': 65, 'dir': 'over', 'name': '8. 패키징', 'cause': "다이싱 톱날 속도 {val}mm/s 과속", 'effect': "실리콘 엣지 깨짐(Chipping)", 'defect': 'EdgeChipping', 'weight': 1.2},
+    1: {'key': 'ttv', 'limit': 1.8, 'dir': 'over', 'unit': 'µm', 'target': '1.8 이하', 'name': '1. 웨이퍼 제조', 'cause': "평탄도(TTV) 과다", 'effect': "표면 굴곡 -> 포토 초점 불량", 'defect': 'Defocus', 'weight': 15.0},
+    2: {'key': 'oxi_temp', 'limit': 1050, 'dir': 'over', 'unit': '℃', 'target': '1050 이하', 'name': '2. 산화 공정', 'cause': "챔버 온도 과열", 'effect': "산화막 두께 팽창", 'defect': 'Center', 'weight': 0.15},
+    3: {'key': 'dose', 'limit': 25, 'dir': 'under', 'unit': 'mJ/cm²', 'target': '25 이상', 'name': '3. 포토 공정', 'cause': "노광량 부족", 'effect': "샷 노이즈 -> 회로 단선", 'defect': 'Random', 'weight': 2.0},
+    4: {'key': 'rf_power', 'limit': 500, 'dir': 'over', 'unit': 'W', 'target': '500 이하', 'name': '4. 식각 공정', 'cause': "RF 파워 과다", 'effect': "플라즈마 가장자리 쏠림 (Ring)", 'defect': 'Ring', 'weight': 0.08},
+    5: {'key': 'gas_flow', 'limit': 70, 'dir': 'over', 'unit': 'sccm', 'target': '70 이하', 'name': '5. 박막 증착', 'cause': "가스 유량 과다", 'effect': "가스 미확산 (Donut 뭉침)", 'defect': 'Donut', 'weight': 0.8},
+    6: {'key': 'pressure', 'limit': 4.5, 'dir': 'over', 'unit': 'psi', 'target': '4.5 이하', 'name': '6. 연마 (CMP)', 'cause': "패드 압력 과다", 'effect': "마이크로 스크래치 발생", 'defect': 'Scratch', 'weight': 8.0},
+    7: {'key': 'probe_force', 'limit': 3.0, 'dir': 'over', 'unit': 'g', 'target': '3.0 이하', 'name': '7. EDS 검사', 'cause': "프로브 하중 초과", 'effect': "패드 물리적 파임", 'defect': 'ProbeMark', 'weight': 12.0},
+    8: {'key': 'dicing_spd', 'limit': 65, 'dir': 'over', 'unit': 'mm/s', 'target': '65 이하', 'name': '8. 패키징', 'cause': "다이싱 톱날 속도 과속", 'effect': "실리콘 엣지 깨짐(Chipping)", 'defect': 'EdgeChipping', 'weight': 1.2},
 }
 
 # =====================================================================
@@ -133,7 +133,7 @@ if run_btn:
     m_dies.metric("생산 칩(Die) 현황", "분석 중...")
     m_loss.metric("재무적 손실 비용", "계산 중...")
     
-    # 1) 공정 시각화 (물리적 표면) 루프 (약 3~4초 소요)
+    # 1) 공정 시각화 루프
     for step in range(1, 9):
         spec = PROCESS_SPECS[step]
         val = current_vals[spec['key']]
@@ -144,8 +144,15 @@ if run_btn:
             
         if is_defect:
             cumulative_defects += get_defect_pattern(spec['defect'])
-            rca_report.append({"공정": spec['name'], "설정 오류": spec['cause'].format(val=val), "발생 결함": spec['effect']})
-            current_yield_pct -= spec['weight'] # 임시 진행용 시각적 차감
+            # 엑셀 다운로드를 고려하여 리포트 구조를 명확히 세분화
+            rca_report.append({
+                "공정명": spec['name'], 
+                "권장 기준값": f"{spec['target']} {spec['unit']}",
+                "나의 설정값": f"{val} {spec['unit']}",
+                "발생 결함": spec['effect'],
+                "상세 원인": spec['cause']
+            })
+            current_yield_pct -= spec['weight']
             
         progress_bar.progress(step / 8.0)
         status_text.info(f"▶ 진행 중: {spec['name']}... (표면 스캔)")
@@ -153,7 +160,6 @@ if run_btn:
         current_wafer = get_base_wafer(step) + cumulative_defects
         current_wafer[~wafer_mask] = np.nan
         
-        # 단일 웨이퍼 렌더링
         fig, ax = plt.subplots(figsize=(6, 5), facecolor='black')
         ax.set_facecolor('black')
         cmap_name = 'bone' if np.max(cumulative_defects) == 0 else 'turbo'
@@ -172,16 +178,14 @@ if run_btn:
     status_text.success("표면 스캔 완료. 칩(Die) 단위 수율 및 재무 손실 계산 중...")
     progress_bar.empty()
 
-    # 2) [Die Map 격자 시각화] 및 [비즈니스 임팩트] 계산
+    # 2) Die Map 및 비즈니스 임팩트 계산
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4.5), facecolor='black')
     
-    # 왼쪽: 물리 표면
     ax1.set_facecolor('black')
     ax1.imshow(current_wafer, cmap=cmap_obj, interpolation='none', vmin=-0.2, vmax=1.5, extent=[-1,1,-1,1])
     ax1.axis('off')
     ax1.set_title("Physical Wafer Surface", color='white')
     
-    # 오른쪽: Die Map (격자 통과/실패)
     ax2.set_facecolor('black')
     ax2.plot(np.cos(np.linspace(0, 2*np.pi, 100)), np.sin(np.linspace(0, 2*np.pi, 100)), color='gray', linewidth=2)
     
@@ -195,21 +199,17 @@ if run_btn:
             x_min, y_min = -1.0 + j * die_step, -1.0 + i * die_step
             cx, cy = x_min + die_step/2, y_min + die_step/2
             
-            # 원(웨이퍼) 안쪽에 완전히 들어오는 칩만 계산
             if np.sqrt(cx**2 + cy**2) <= 0.95:
                 total_dies += 1
-                
-                # 좌표를 배열 인덱스로 변환하여 해당 칩 영역의 결함도 검사
                 px_min, px_max = int((x_min+1)/2*size), int((x_min+die_step+1)/2*size)
                 py_min, py_max = int((y_min+1)/2*size), int((y_min+die_step+1)/2*size)
                 defect_area = cumulative_defects[py_min:py_max, px_min:px_max]
                 
-                # 칩 안에 결함 임계치 이상 존재 시 Fail 처리
                 if np.max(defect_area) > 0.05:
                     fail_dies += 1
-                    color = '#ff3333' # 붉은색(Fail)
+                    color = '#ff3333'
                 else:
-                    color = '#33cc33' # 초록색(Pass)
+                    color = '#33cc33'
                     
                 import matplotlib.patches as patches
                 rect = patches.Rectangle((x_min, y_min), die_step, die_step, linewidth=0.5, edgecolor='black', facecolor=color, alpha=0.8)
@@ -226,8 +226,7 @@ if run_btn:
     # 3) 대시보드 지표 및 통계 업데이트
     good_dies = total_dies - fail_dies
     final_yield = (good_dies / total_dies * 100) if total_dies > 0 else 0
-    
-    DIE_PRICE = 50000 # 칩 1개당 5만 원 가정
+    DIE_PRICE = 50000
     total_revenue = total_dies * DIE_PRICE
     financial_loss = fail_dies * DIE_PRICE
 
@@ -248,8 +247,17 @@ if run_btn:
             df_rca = pd.DataFrame(rca_report)
             st.table(df_rca)
             
+            # 리포트 다운로드 파일명에 타임스탬프 추가 (파일 덮어쓰기 방지)
+            current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
             csv_data = df_rca.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 RCA 원인 분석 리포트 다운로드 (CSV 엑셀)", data=csv_data, file_name="FAB_RCA_Report.csv", mime="text/csv", type="primary")
+            
+            st.download_button(
+                label="📥 RCA 원인 분석 리포트 다운로드 (CSV 엑셀)", 
+                data=csv_data, 
+                file_name=f"FAB_RCA_Report_{current_time}.csv", 
+                mime="text/csv", 
+                type="primary"
+            )
         else:
             st.success(f"✅ **결함 없음 (Golden Yield 100%)** - 총 잠재 매출: {total_revenue:,} 원 확보!")
             st.balloons()
